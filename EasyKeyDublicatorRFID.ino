@@ -29,9 +29,6 @@ emkeyType keyType;
 
 void setup() {
   pinMode(BtnPin, INPUT_PULLUP);                            // включаем чтение и подягиваем пин кнопки режима к +5В
-  //это вход компараора
- // pinMode(BtnPin, INPUT);                            // включаем чтение и подягиваем пин кнопки режима к +5В
-
   pinMode(BtnPinGnd, OUTPUT); digitalWrite(BtnPinGnd, LOW); // подключаем второй пин кнопки к земле
   pinMode(speakerPin, OUTPUT);
   pinMode(speakerPinGnd, OUTPUT); digitalWrite(speakerPinGnd, LOW); // подключаем второй пин спикера к земле
@@ -40,13 +37,6 @@ void setup() {
   pinMode(R_Led, OUTPUT); pinMode(G_Led, OUTPUT); pinMode(B_Led, OUTPUT);  //RGB-led
   clearLed();
   pinMode(FreqGen, OUTPUT);                               
-  TCCR2A = _BV(COM2A0) | _BV(COM2B1) | _BV(WGM21) | _BV(WGM20);  //Вкючаем режим Toggle on Compare Match на COM2A (pin 11) и счет таймера2 до OCR2A
-  TCCR2B = _BV(WGM22) | _BV(CS20);                                // Задаем делитель для таймера2 = 1 (16 мГц)
-  OCR2A = 63;                                                    // 63 тактов на период. Частота на COM2A (pin 11) 16000/64/2 = 125 кГц, Скважнось COM2A в этом режиме всегда 50% 
-  OCR2B = 31;                                                     // Скважность COM2B 32/64 = 50%  Частота на COM2A (pin 3) 16000/64 = 250 кГц
-  // TCCR2A &=0b00111111;              //Оключить ШИМ COM2A (pin 11)
-  // TCCR2A |= _BV(COM2A0);            // Включиь ШИМ COM2A (pin 11)
-
   digitalWrite(B_Led, HIGH);                                //awaiting of origin key data
   Serial.begin(115200);
   Sd_StartOK();
@@ -272,23 +262,24 @@ unsigned long pulseAComp(bool pulse, unsigned long timeOut = 20000){  // pulse H
 }
 
 void ACsetOn(){
-  ADCSRA &= ~(1<<ADEN);       // выключаем ADC
-  ADMUX &= 0b11111011;        // подключаем к AC Линию A3
   ACSR |= 1<<ACBG;            // Подключаем ко входу Ain0 1.1V для Cyfral/Metacom
+  ADCSRA &= ~(1<<ADEN);       // выключаем ADC
+  ADMUX = (ADMUX&0b11110000) | 0b0011;             // подключаем к AC Линию A3
   ADCSRB |= 1<<ACME;          // включаем мульиплексор AC
+  //ADCSRB &= ~(1<<ACME);          // отключаем мульиплексор AC
 }
 
 bool read_cyfral(byte* buf, byte CyfralPin){
   unsigned long ti; byte j = 0;
   digitalWrite(CyfralPin, LOW); pinMode(CyfralPin, OUTPUT);  //отклчаем питание от ключа
   delay(100);
-  ACsetOn();    
-  pinMode(CyfralPin, INPUT_PULLUP);  // включаем пиание Cyfral
+  pinMode(CyfralPin, INPUT);  // включаем пиание Cyfral
+  ACsetOn(); 
   for (byte i = 0; i<36; i++){    // чиаем 36 bit
     ti = pulseAComp(HIGH);
     if ((ti == 0) || (ti > 200)) break;                      // not Cyfral
     //if ((ti > 20)&&(ti < 50)) bitClear(buf[i >> 3], 7-j);
-    if ((ti > 50) && (ti < 200)) bitSet(buf[i >> 3], 7-j);
+    if ((ti > 80) && (ti < 200)) bitSet(buf[i >> 3], 7-j);
     j++; if (j>7) j=0; 
   }
   if (ti == 0) return false;
