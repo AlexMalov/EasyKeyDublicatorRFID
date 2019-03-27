@@ -356,7 +356,7 @@ bool readEM_Marie(byte* buf){
     }
     if ((i > 8) && (i < 59)){     //начиная с 9-го ита проверяем контроль четности каждой строки
       if (ti) k++;                // считаем кол-во единиц
-      if ( (i-9)%5 == 4 ){      // конец строки с данными из 5-и ит, 
+      if ( (i-9)%5 == 4 ){      // конец строки с данными из 5-и бит, 
         if (k & 1) {              //если нечетно - начинаем сначала
           i = -1; j = 0; k = 0; continue; 
         }
@@ -389,8 +389,7 @@ bool searchEM_Marine(){
   bool rez = false;
   rfidACsetOn();            // включаем генератор 125кГц и компаратор
   delay(13);                //13 мс длятся переходные прцессы детектора 
-  byte buf1[8], buf2[8];
-  if (!readEM_Marie(buf1)) goto l2;
+  if (!readEM_Marie(addr)) goto l2;
  /*
   if (!readEM_Marie(buf2)) goto l2;
   for (byte i = 0; i<8; i++) 
@@ -399,7 +398,8 @@ bool searchEM_Marine(){
   rez = true;
   keyType = keyEM_Marie;
   for (byte i = 0; i<8; i++){
-    Serial.print(buf1[i], HEX); Serial.print(":");
+    keyID[i] = addr [i];
+    Serial.print(keyID[i], HEX); Serial.print(":");
   }
   Serial.print(" ( ");
   for (byte i = 0; i<5; i++){
@@ -419,6 +419,27 @@ bool searchEM_Marine(){
   return rez;
 }
 
+void SendEM_Marine(){
+  byte bt;
+  delay(10); 
+  for (byte i = 0; i<8; i++){
+    for (byte j = 0; i<8; i++){
+      bt = 1&keyID[i]>>(7-j); 
+      if (bt) {
+        digitalWrite(FreqGen, bt);
+        delayMicroseconds(250);
+        digitalWrite(FreqGen, !bt);
+      } else {
+        digitalWrite(FreqGen, !bt);
+        delayMicroseconds(250);
+        digitalWrite(FreqGen, bt);
+      }
+      delayMicroseconds(250);
+    }
+  }  
+}
+
+bool blueMode = false;
 void loop() {
   bool BtnPinSt  = digitalRead(BtnPin);
   bool BtnClick;
@@ -428,9 +449,19 @@ void loop() {
   if ((Serial.read() == 't') || BtnClick) {  // переключаель режима чтение/запись
     if (readflag == true) {
       writeflag = !writeflag;
-      clearLed(); 
-      if (writeflag) digitalWrite(R_Led, HIGH);
-        else digitalWrite(G_Led, HIGH);
+      clearLed();
+      if (writeflag) {
+        blueMode = false;
+        digitalWrite(R_Led, HIGH);
+      } else {
+          if (!blueMode&&(keyType == keyEM_Marie)){
+            blueMode = true;
+            digitalWrite(B_Led, HIGH);
+          } else {
+            blueMode = false;
+            digitalWrite(G_Led, HIGH);  
+          }
+        }
       Serial.print("Writeflag = "); Serial.println(writeflag);  
     } else {
       clearLed();   
@@ -449,6 +480,11 @@ void loop() {
     Sd_ReadOK();
     readflag = true;
     clearLed(); digitalWrite(G_Led, HIGH);
+  }
+  if (blueMode){
+    SendEM_Marine();
+    clearLed();
+    digitalWrite(B_Led, HIGH);
   }
   //goto l1;
   if (!ibutton.search(addr)) {  // запускаем поиск dallas
