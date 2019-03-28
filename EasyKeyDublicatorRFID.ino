@@ -72,7 +72,6 @@ emRWType getRWtype(){
   delay(10); pinMode(iButtonPin, INPUT);
   ibutton.reset(); ibutton.write(0x1E);  // send 0x1E - запрос на чтение флага записи
   answer = ibutton.read();
-  //Serial.print("\n Answer RW-1990.2: "); Serial.println(answer, HEX);
   if (answer == 0xFE){
     ibutton.reset(); ibutton.write(0x1D); // возвращаем оратно запрет записи для RW-1990.2
     ibutton.write_bit(0);                 // записываем значение флага записи = 0 - выключаем запись
@@ -80,14 +79,12 @@ emRWType getRWtype(){
     Serial.println(" Type: dallas RW-1990.2 ");
     return RW1990_2; // это RW-1990.2
   }
-  //}
   // пробуем определить TM-2004
   ibutton.reset(); ibutton.write(0x33);                     // посылаем команду чтения ROM для перевода в расширенный 3-х байтовый режим
   for ( byte i=0; i<8; i++) ibutton.read();                 //читаем данные ключа
   ibutton.write(0xAA);                                      // пробуем прочитать регистр статуса для TM-2004    
   ibutton.write(0x00); ibutton.write(0x00);                 // передаем адрес для считывания
   answer = ibutton.read();                                  // читаем CRC комманды и адреса
-  //Serial.print("TM2004 CRC: "); Serial.println(answer, HEX);
   byte m1[3] = {0xAA, 0,0};                                 // вычисляем CRC комманды
   if (OneWire::crc8(m1, 3) == answer) {
     answer = ibutton.read();                                  // читаем регистр статуса
@@ -225,9 +222,8 @@ bool readiBtn(){
   if (addr[0] == 0x01) {                         // это ключ формата dallas
     keyType = keyDallas;
     if (getRWtype() == TM2004) {
-      //Serial.println(" Type: dallas TM2004");
       keyType = keyTM2004;
-    } //else Serial.println(" Type: dallas RW1990.x");
+    } 
     if (OneWire::crc8(addr, 7) != addr[7]) {
       Serial.println("CRC is not valid!");
       Sd_ErrorBeep();
@@ -262,11 +258,10 @@ unsigned long pulseAComp(bool pulse, unsigned long timeOut = 20000){  // pulse H
 }
 
 void ACsetOn(){
-  ACSR |= 1<<ACBG;            // Подключаем ко входу Ain0 1.1V для Cyfral/Metacom
-  ADCSRA &= ~(1<<ADEN);       // выключаем ADC
-  ADMUX = (ADMUX&0b11110000) | 0b0011;             // подключаем к AC Линию A3
-  ADCSRB |= 1<<ACME;          // включаем мульиплексор AC
-  //ADCSRB &= ~(1<<ACME);          // отключаем мульиплексор AC
+  ACSR |= 1<<ACBG;                            // Подключаем ко входу Ain0 1.1V для Cyfral/Metacom
+  ADCSRA &= ~(1<<ADEN);                       // выключаем ADC
+  ADMUX = (ADMUX&0b11110000) | 0b0011;        // подключаем к AC Линию A3
+  ADCSRB |= 1<<ACME;                          // включаем мульиплексор AC
 }
 
 bool read_cyfral(byte* buf, byte CyfralPin){
@@ -279,7 +274,7 @@ bool read_cyfral(byte* buf, byte CyfralPin){
     ti = pulseAComp(HIGH);
     if ((ti == 0) || (ti > 200)) break;                      // not Cyfral
     //if ((ti > 20)&&(ti < 50)) bitClear(buf[i >> 3], 7-j);
-    if ((ti > 80) && (ti < 200)) bitSet(buf[i >> 3], 7-j);
+    if ((ti > 90) && (ti < 200)) bitSet(buf[i >> 3], 7-j);
     j++; if (j>7) j=0; 
   }
   if (ti == 0) return false;
@@ -377,9 +372,7 @@ void rfidACsetOn(){
   TCCR2B = _BV(WGM22) | _BV(CS20);                                // Задаем делитель для таймера2 = 1 (16 мГц)
   OCR2A = 63;                                                    // 63 тактов на период. Частота на COM2A (pin 11) 16000/64/2 = 125 кГц, Скважнось COM2A в этом режиме всегда 50% 
   OCR2B = 31;                                                     // Скважность COM2B 32/64 = 50%  Частота на COM2A (pin 3) 16000/64 = 250 кГц
-
   // включаем компаратор
-  //ADCSRA &= ~(1<<ADEN);       // выключаем ADC
   ADCSRB &= ~(1<<ACME);          // отключаем мультиплексор AC
   ACSR &= ~(1<<ACBG);           // отключаем от входа Ain0 1.1V
 }
@@ -390,25 +383,20 @@ bool searchEM_Marine(){
   rfidACsetOn();            // включаем генератор 125кГц и компаратор
   delay(13);                //13 мс длятся переходные прцессы детектора 
   if (!readEM_Marie(addr)) goto l2;
- /*
-  if (!readEM_Marie(buf2)) goto l2;
-  for (byte i = 0; i<8; i++) 
-    if (buf1[i] != buf2[i]) goto l2;
-    */
   rez = true;
   keyType = keyEM_Marie;
   for (byte i = 0; i<8; i++){
     keyID[i] = addr [i];
     Serial.print(keyID[i], HEX); Serial.print(":");
   }
-  Serial.print(" ( ");
-  for (byte i = 0; i<5; i++){
-    Serial.print(rfidData[i], HEX); Serial.print(" ");
-  }
+  Serial.print(" ( id ");
+  Serial.print(rfidData[0]); Serial.print(" key ");
+  unsigned long keyNum = (unsigned long)rfidData[1]<<24 | (unsigned long)rfidData[2]<<16 | (unsigned long)rfidData[3]<<8 | rfidData[4];
+  Serial.print(keyNum);
   Serial.println(") Type: EM-Marie ");
 /*  
   for(byte i = 0; i < 100; i++){
-    TCCR2A |= _BV(COM2A0);            // Включиь ШИМ COM2A (pin 11)
+    TCCR2A |= _BV(COM2A0);            // Включить ШИМ COM2A (pin 11)
     delay(30);
 //    TCCR2A &=0b00111111;              //Оключить ШИМ COM2A (pin 11)
     delay(20);
@@ -438,7 +426,6 @@ void SendEM_Marine(){
     }
   }  
 }
-
 bool blueMode = false;
 void loop() {
   bool BtnPinSt  = digitalRead(BtnPin);
@@ -449,12 +436,12 @@ void loop() {
   if ((Serial.read() == 't') || BtnClick) {  // переключаель режима чтение/запись
     if (readflag == true) {
       writeflag = !writeflag;
-      clearLed();
+      clearLed(); 
       if (writeflag) {
         blueMode = false;
         digitalWrite(R_Led, HIGH);
       } else {
-          if (!blueMode&&(keyType == keyEM_Marie)){
+          if ((!blueMode)&&(keyType == keyEM_Marie)){
             blueMode = true;
             digitalWrite(B_Led, HIGH);
           } else {
@@ -480,11 +467,6 @@ void loop() {
     Sd_ReadOK();
     readflag = true;
     clearLed(); digitalWrite(G_Led, HIGH);
-  }
-  if (blueMode){
-    SendEM_Marine();
-    clearLed();
-    digitalWrite(B_Led, HIGH);
   }
   //goto l1;
   if (!ibutton.search(addr)) {  // запускаем поиск dallas
