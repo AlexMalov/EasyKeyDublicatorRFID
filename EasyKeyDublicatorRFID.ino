@@ -12,6 +12,7 @@
 #define speakerPin 10       // Спикер, он же buzzer, он же beeper
 #define FreqGen 11         // генератор 125 кГц
 #define speakerPinGnd 12   // земля Спикера
+#define blueModePin A2      // Эмулятор ключа rfid
 
 #define rfidBitRate 2       // Скорость омена с rfid в kbps
 
@@ -35,6 +36,8 @@ void setup() {
   pinMode(ACpin, INPUT);                                            // Вход аналогового компаратора 3В для Cyfral
   pinMode(ACpinGnd, OUTPUT); digitalWrite(ACpinGnd, LOW);           // подключаем второй пин аналогового компаратора Cyfral к земле 
   pinMode(R_Led, OUTPUT); pinMode(G_Led, OUTPUT); pinMode(B_Led, OUTPUT);  //RGB-led
+ // pinMode(blueModePin, INPUT); //digitalWrite(blueModePin, LOW);
+  digitalWrite(blueModePin, LOW); pinMode(blueModePin, OUTPUT);
   clearLed();
   pinMode(FreqGen, OUTPUT);                               
   digitalWrite(B_Led, HIGH);                                //awaiting of origin key data
@@ -341,12 +344,14 @@ byte ttAComp(unsigned long timeOut = 10000){  // pulse 0 or 1 or -1 if timeout
 }
 
 bool readEM_Marie(byte* buf){
+  unsigned long tStart = millis();
   byte ti; byte j = 0, k=0;
   for (int i = 0; i<64; i++){    // чиаем 64 bit
     ti = ttAComp();
     if (ti == 2)  break;         //timeout
     //Serial.print("b ");
     if ( ( ti == 0 ) && ( i < 9)) {  // если не находим 9 стартовых единиц - начинаем сначала
+      if ((long)(millis()-tStart) > 50) { ti=2; break;}  //timeout
       i = -1; j=0; continue;
     }
     if ((i > 8) && (i < 59)){     //начиная с 9-го ита проверяем контроль четности каждой строки
@@ -409,23 +414,32 @@ bool searchEM_Marine(){
 
 void SendEM_Marine(){
   byte bt;
+  digitalWrite(FreqGen, HIGH);
+  //digitalWrite(blueModePin, LOW); pinMode(blueModePin, OUTPUT);
+  //FF:A9:8A:A4:87:78:98:6A
+  keyID[0] = 0xFF; keyID[1] = 0xA9; keyID[2] =  0x8A; keyID[3] = 0xA4; keyID[4] = 0x87; keyID[5] = 0x78; keyID[6] = 0x98; keyID[7] = 0x6A;
   delay(10); 
-  for (byte i = 0; i<8; i++){
-    for (byte j = 0; i<8; i++){
-      bt = 1&keyID[i]>>(7-j); 
-      if (bt) {
-        digitalWrite(FreqGen, bt);
+  for (byte i = 0; i<3; i++){
+    for (byte i = 0; i<8; i++){
+      for (byte j = 0; i<8; i++){
+        bt = 1&keyID[i]>>(7-j); 
+        if (!bt) {
+          digitalWrite(blueModePin, bt);
+          delayMicroseconds(250);
+          digitalWrite(blueModePin, !bt);
+        } else {
+          digitalWrite(blueModePin, !bt);
+          delayMicroseconds(250);
+          digitalWrite(blueModePin, bt); //blueModePin FreqGen
+        }
         delayMicroseconds(250);
-        digitalWrite(FreqGen, !bt);
-      } else {
-        digitalWrite(FreqGen, !bt);
-        delayMicroseconds(250);
-        digitalWrite(FreqGen, bt);
       }
-      delayMicroseconds(250);
     }
+    digitalWrite(blueModePin, LOW); pinMode(blueModePin, OUTPUT);
+    delay(1);
   }  
 }
+
 bool blueMode = false;
 void loop() {
   bool BtnPinSt  = digitalRead(BtnPin);
@@ -456,6 +470,7 @@ void loop() {
       digitalWrite(B_Led, HIGH);
     }
   }
+  if (blueMode) SendEM_Marine();
   if ((!writeflag) && (searchCyfral())) {  // запускаем поиск cyfral
     digitalWrite(G_Led, LOW);
     Sd_ReadOK();
@@ -468,6 +483,7 @@ void loop() {
     readflag = true;
     clearLed(); digitalWrite(G_Led, HIGH);
   }
+  
   //goto l1;
   if (!ibutton.search(addr)) {  // запускаем поиск dallas
     ibutton.reset_search();
