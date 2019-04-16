@@ -5,14 +5,13 @@
 #define R_Led 2            // RGB Led
 #define G_Led 3
 #define B_Led 4
-#define ACpinGnd 5         // Земля аналогового компаратора
-#define ACpin 6            // Вход Ain0 аналогового компаратора 0.1В для EM-Marie 
+#define VRpinGnd 5         // Земля подстроечного резистора для аналогового компаратора
+#define ACpin 6            // Вход Ain0 аналогового компаратора для EM-Marie
 #define BtnPin 8           // Кнопка переключения режима чтение/запись
 #define BtnPinGnd 9        // Земля кнопки переключения режима 
 #define speakerPin 10       // Спикер, он же buzzer, он же beeper
 #define FreqGen 11         // генератор 125 кГц
 #define speakerPinGnd 12   // земля Спикера
-#define blueModePin A2      // Эмулятор ключа rfid
 #define rfidBitRate 2       // Скорость обмена с rfid в kbps
 #define rfidUsePWD 0        // ключ использует пароль для изменения
 #define rfidPWD 123456      // пароль для ключа
@@ -33,10 +32,9 @@ void setup() {
   pinMode(BtnPinGnd, OUTPUT); digitalWrite(BtnPinGnd, LOW); // подключаем второй пин кнопки к земле
   pinMode(speakerPin, OUTPUT);
   pinMode(speakerPinGnd, OUTPUT); digitalWrite(speakerPinGnd, LOW); // подключаем второй пин спикера к земле
-  pinMode(ACpin, INPUT);                                            // Вход аналогового компаратора 3В для Cyfral
-  pinMode(ACpinGnd, OUTPUT); digitalWrite(ACpinGnd, LOW);           // подключаем второй пин аналогового компаратора Cyfral к земле 
+  pinMode(ACpin, INPUT);                                            // Вход аналогового компаратора для ключей RFID и аналоговых ключей Cyfral / Metacom
+  pinMode(VRpinGnd, OUTPUT); digitalWrite(VRpinGnd, LOW);           // подключаем пин подстроечного резистора к земле
   pinMode(R_Led, OUTPUT); pinMode(G_Led, OUTPUT); pinMode(B_Led, OUTPUT);  //RGB-led
-  digitalWrite(blueModePin, LOW); pinMode(blueModePin, OUTPUT);
   clearLed();
   pinMode(FreqGen, OUTPUT);                               
   digitalWrite(B_Led, HIGH);                                //awaiting of origin key data
@@ -381,13 +379,17 @@ void rfidACsetOn(){
   // включаем компаратор
   ADCSRB &= ~(1<<ACME);           // отключаем мультиплексор AC
   ACSR &= ~(1<<ACBG);             // отключаем от входа Ain0 1.1V
+  digitalWrite(ACpin, LOW); pinMode(ACpin, OUTPUT);                                            // ускоряем переходные процессы в детекторе
+  delay(1);
+  pinMode(ACpin, INPUT);
+  delay(1);
 }
 
 bool searchEM_Marine( bool copyKey = true){
   byte gr = digitalRead(G_Led);
   bool rez = false;
   rfidACsetOn();            // включаем генератор 125кГц и компаратор
-  delay(13);                //13 мс длятся переходные прцессы детектора 
+  delay(4);                //4 мс запускается ключ
   if (!readEM_Marie(addr)) goto l2;
   rez = true;
   keyType = keyEM_Marie;
@@ -462,6 +464,7 @@ bool sendOpT5557(byte opCode, unsigned long password = 0, byte lockBit = 0, unsi
 
 bool write2rfidT5557(byte* buf){
   bool result; unsigned long data32;
+  digitalWrite(R_Led, LOW);
   delay(6);
   for (byte k = 0; k<2; k++){                                       // send key data
     data32 = (unsigned long)buf[0 + (k<<2)]<<24 | (unsigned long)buf[1 + (k<<2)]<<16 | (unsigned long)buf[2 + (k<<2)]<<8 | (unsigned long)buf[3 + (k<<2)];
@@ -491,7 +494,7 @@ bool write2rfidT5557(byte* buf){
 emRWType getRfidRWtype(){
   unsigned long data32, data33; byte buf[4] = {0, 0, 0, 0}; 
   rfidACsetOn();            // включаем генератор 125кГц и компаратор
-  delay(13);                //13 мс длятся переходные прцессы детектора
+  delay(4);                //4мс запускается ключ
   rfidGap(30 * 8);          //start gap
   sendOpT5557(0b11, 0, 0, 0, 1); //переходим в режим чтения Vendor ID 
   if (!T5557_blockRead(buf)) return rwUnknown; 
@@ -529,7 +532,7 @@ bool write2rfid(){
   }
   emRWType rwType = getRfidRWtype(); // определяем тип T5557 (T5577) или EM4305
   if (rwType != rwUnknown) Serial.print("\n Burning rfid ID: ");
-  //keyID[0] = 0xFF; keyID[1] = 0xA9; keyID[2] =  0x8A; keyID[3] = 0xA4; keyID[4] = 0x87; keyID[5] = 0x78; keyID[6] = 0x98; keyID[7] = 0x6A;
+  //keyID[0] = 0xFF; keyID[1] = 0xA9; keyID[2] =  0x8A; keyID[3] = 0xA4; keyID[4] = 0x87; keyID[5] = 0x78; keyID[6] = 0x98; keyID[7] = 0x6A; // если у вас есть код какого-то ключа, можно прописать его тут
   switch (rwType){
     case T5557: return write2rfidT5557(keyID); break;                    //пишем T5557
     //case EM4305: return write2rfidEM4305(keyID); break;                  //пишем EM4305
