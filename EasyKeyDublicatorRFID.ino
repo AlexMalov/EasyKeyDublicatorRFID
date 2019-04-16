@@ -401,36 +401,9 @@ bool searchEM_Marine( bool copyKey = true){
   Serial.print(keyNum);
   Serial.println(") Type: EM-Marie ");
   l2:
-  TCCR2A &=0b00111111;              //Оключить ШИМ COM2A (pin 11)
+  if (!copyKey) TCCR2A &=0b00111111;              //Оключить ШИМ COM2A (pin 11)
   digitalWrite(G_Led, gr);
   return rez;
-}
-
-void SendEM_Marine(){
-  byte bt;
-  digitalWrite(FreqGen, HIGH);
-  //FF:A9:8A:A4:87:78:98:6A
-  keyID[0] = 0xFF; keyID[1] = 0xA9; keyID[2] =  0x8A; keyID[3] = 0xA4; keyID[4] = 0x87; keyID[5] = 0x78; keyID[6] = 0x98; keyID[7] = 0x6A;
-  delay(10); 
-  for (byte i = 0; i<3; i++){
-    for (byte i = 0; i<8; i++){
-      for (byte j = 0; i<8; i++){
-        bt = 1&keyID[i]>>(7-j); 
-        if (!bt) {
-          digitalWrite(blueModePin, bt);
-          delayMicroseconds(250);
-          digitalWrite(blueModePin, !bt);
-        } else {
-          digitalWrite(blueModePin, !bt);
-          delayMicroseconds(250);
-          digitalWrite(blueModePin, bt); //blueModePin FreqGen
-        }
-        delayMicroseconds(250);
-      }
-    }
-    digitalWrite(blueModePin, LOW); pinMode(blueModePin, OUTPUT);
-    delay(1);
-  }  
 }
 
 void TxBitRfid(byte data){
@@ -455,11 +428,11 @@ void rfidGap(unsigned int tm){
 bool T5557_blockRead(byte* buf){
   byte ti; byte j = 0, k=0;
   for (int i = 0; i<33; i++){    // читаем стартовый 0 и 32 значащих bit
-    ti = ttAComp();
+    ti = ttAComp(2000);
     if (ti == 2)  break;         //timeout
-    //Serial.print("b ");
-    if ( ( ti == 1 ) && ( i = 0)) {  // если не находим стартовый 0 - это ошибка
+    if ( ( ti == 1 ) && ( i == 0)) {  // если не находим стартовый 0 - это ошибка
       ti=2; 
+      Serial.print("b2 ");
       break;
     }
     if (i > 0){     //начиная с 1-го бита пишем в буфер
@@ -477,37 +450,32 @@ bool sendOpT5557(byte opCode, unsigned long password = 0, byte lockBit = 0, unsi
   if (opCode == 0b00) return true;
   // password
   TxBitRfid(lockBit & 1);               // lockbit 0
-  if (opCode != 0b11){
+  if (data != 0){
     for (byte i = 0; i<32; i++) {
       TxBitRfid((data>>(31-i)) & 1);
-      Serial.print('*'); Sd_WriteStep();
     }
   }
   TxBitRfid(blokAddr>>2); TxBitRfid(blokAddr>>1); TxBitRfid(blokAddr & 1);      // адрес блока для записи
-  delay(3);                       // ждем пока пишутся данные
+  delay(4);                       // ждем пока пишутся данные
   return true;
 }
 
-bool write2rfidT5557(){
-  bool result = true; unsigned long data32, data32t;
-  rfidACsetOn();            // включаем генератор 125кГц и компаратор
-  delay(13);                //13 мс длятся переходные прцессы детектора
-  //prepare config
-  rfidGap(30 * 8);          //start gap
-  data32 = 0b00000000000101001000000001000000 | (rfidUsePWD << 4); //конфиг регистр 0b00000000000101001000000001000000
-  sendOpT5557(0b10, 0, 0, data32, 0); //передаем конфиг регистр
-  result = T5557_blockRead(data32t);
-  if (!result || (data32 != data32t)) { result = false; goto l4;}
-  // send key data
-  for (byte k = 0; k<2; k++){   
-    data32 = (unsigned long)keyID[0 + k<<2]<<24 | (unsigned long)keyID[1 + k<<2]<<16 | (unsigned long)keyID[2 + k<<2]<<8 | (unsigned long)keyID[3 + k<<2]; 
-    sendOpT5557(0b10, 0, 0, data32, k);                                                         //передаем 32 бита ключа в blok k
-    result = T5557_blockRead(data32t);
-    if (!result || (data32 != data32t)) { result = false; break;}
+bool write2rfidT5557(byte* buf){
+  bool result; unsigned long data32;
+  delay(6);
+  for (byte k = 0; k<2; k++){                                       // send key data
+    data32 = (unsigned long)buf[0 + (k<<2)]<<24 | (unsigned long)buf[1 + (k<<2)]<<16 | (unsigned long)buf[2 + (k<<2)]<<8 | (unsigned long)buf[3 + (k<<2)];
+    rfidGap(30 * 8);                                                 //start gap
+    sendOpT5557(0b10, 0, 0, data32, k+1);                            //передаем 32 бита ключа в blok k
+    Serial.print('*'); delay(6);
   }
-  l4:
+  delay(6);
   rfidGap(30 * 8);          //start gap
-  TxBitRfid(0); TxBitRfid(0); // передаем Reset
+  sendOpT5557(0b00);
+  result = readEM_Marie(addr);
+  TCCR2A &=0b00111111;              //Оключить ШИМ COM2A (pin 11)
+  for (byte i = 0; i < 8; i++)
+    if (addr[i] != keyID[i]) { result = false; break; }
   if (!result){
     Serial.println(" The key copy faild");
     Sd_ErrorBeep();
@@ -517,33 +485,40 @@ bool write2rfidT5557(){
     delay(1000);
   }
   digitalWrite(R_Led, HIGH);
-  TCCR2A &=0b00111111;              //Оключить ШИМ COM2A (pin 11)
   return result;  
 }
 
 emRWType getRfidRWtype(){
-  unsigned long data32 = 0;
+  unsigned long data32, data33; byte buf[4] = {0, 0, 0, 0}; 
   rfidACsetOn();            // включаем генератор 125кГц и компаратор
   delay(13);                //13 мс длятся переходные прцессы детектора
-  //prepare config
   rfidGap(30 * 8);          //start gap
-  sendOpT5557(0b11, 0, 0, 0, 1); //переходим в режим чтения конфиг регистр
-  if (T5557_blockRead(data32) && (data32 != 0)) {
-    sendOpT5557(0b00, 0, 0, 0, 0);          // send Reset
-    Serial.print(" The rfid RW-key is T5557. Vendor ID is ");
-    Serial.println(data32, HEX); 
-    return T5557;
-  }
-  return rwUnknown;
+  sendOpT5557(0b11, 0, 0, 0, 1); //переходим в режим чтения Vendor ID 
+  if (!T5557_blockRead(buf)) return rwUnknown; 
+  data32 = (unsigned long)buf[0]<<24 | (unsigned long)buf[1]<<16 | (unsigned long)buf[2]<<8 | (unsigned long)buf[3];
+  delay(4);
+  rfidGap(20 * 8);          //gap  
+  data33 = 0b00000000000101001000000001000000 | (rfidUsePWD << 4);   //конфиг регистр 0b00000000000101001000000001000000
+  sendOpT5557(0b10, 0, 0, data33, 0);   //передаем конфиг регистр
+  delay(4);
+  rfidGap(30 * 8);          //start gap
+  sendOpT5557(0b11, 0, 0, 0, 1); //переходим в режим чтения Vendor ID 
+  if (!T5557_blockRead(buf)) return rwUnknown; 
+  data33 = (unsigned long)buf[0]<<24 | (unsigned long)buf[1]<<16 | (unsigned long)buf[2]<<8 | (unsigned long)buf[3];
+  sendOpT5557(0b00, 0, 0, 0, 0);  // send Reset
+  delay(6);
+  if (data32 != data33) return rwUnknown;    
+  Serial.print(" The rfid RW-key is T5557. Vendor ID is ");
+  Serial.println(data32, HEX);
+  return T5557;
 }
 
 bool write2rfid(){
-  int Check = 0;
+  bool Check = true;
   if (searchEM_Marine(false)) {
-    Serial.print(" it's the new key code ");
     for (byte i = 0; i < 8; i++)
-      if (keyID[i] == addr[i]) Check++;    // сравниваем код для записи с тем, что уже записано в ключе.
-    if (Check == 8) {                     // если коды совпадают, ничего писать не нужно
+      if (addr[i] != keyID[i]) { Check = false; break; }  // сравниваем код для записи с тем, что уже записано в ключе.
+    if (Check) {                                          // если коды совпадают, ничего писать не нужно
       digitalWrite(R_Led, LOW); 
       Serial.println(" it is the same key. Writing in not needed.");
       Sd_ErrorBeep();
@@ -554,15 +529,15 @@ bool write2rfid(){
   }
   emRWType rwType = getRfidRWtype(); // определяем тип T5557 (T5577) или EM4305
   if (rwType != rwUnknown) Serial.print("\n Burning rfid ID: ");
+  //keyID[0] = 0xFF; keyID[1] = 0xA9; keyID[2] =  0x8A; keyID[3] = 0xA4; keyID[4] = 0x87; keyID[5] = 0x78; keyID[6] = 0x98; keyID[7] = 0x6A;
   switch (rwType){
-    case T5557: return write2rfidT5557(); break;                    //пишем T5557
-    //case EM4305: return write2rfidEM4305(); break;                  //пишем EM4305
+    case T5557: return write2rfidT5557(keyID); break;                    //пишем T5557
+    //case EM4305: return write2rfidEM4305(keyID); break;                  //пишем EM4305
     case rwUnknown: break;
   }
   return false;
 }
 
-bool blueMode = false;
 void loop() {
   bool BtnPinSt  = digitalRead(BtnPin);
   bool BtnClick;
@@ -573,18 +548,8 @@ void loop() {
     if (readflag == true) {
       writeflag = !writeflag;
       clearLed(); 
-      if (writeflag) {
-        blueMode = false;
-        digitalWrite(R_Led, HIGH);
-      } else {
-          if ((!blueMode)&&(keyType == keyEM_Marie)){
-            blueMode = true;
-            digitalWrite(B_Led, HIGH);
-          } else {
-            blueMode = false;
-            digitalWrite(G_Led, HIGH);  
-          }
-        }
+      if (writeflag) digitalWrite(R_Led, HIGH);
+        else digitalWrite(G_Led, HIGH);
       Serial.print("Writeflag = "); Serial.println(writeflag);  
     } else {
       clearLed();   
@@ -592,7 +557,6 @@ void loop() {
       digitalWrite(B_Led, HIGH);
     }
   }
-  if (blueMode) SendEM_Marine();
   if (!writeflag){
     if (searchCyfral() || searchEM_Marine() || searchIbutton()){            // запускаем поиск cyfral, затем поиск EM_Marine, затем поиск dallas
       digitalWrite(G_Led, LOW);
