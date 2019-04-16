@@ -1,6 +1,7 @@
 #include <OneWire.h>
 #include "pitches.h"
 
+#define CheckL 0           // для настройки катушки временно установите тут единицу
 #define iButtonPin A3      // Линия data ibutton
 #define R_Led 2            // RGB Led
 #define G_Led 3
@@ -348,7 +349,6 @@ bool readEM_Marie(byte* buf){
   for (int i = 0; i<64; i++){    // читаем 64 bit
     ti = ttAComp();
     if (ti == 2)  break;         //timeout
-    //Serial.print("b ");
     if ( ( ti == 0 ) && ( i < 9)) {  // если не находим 9 стартовых единиц - начинаем сначала
       if ((long)(millis()-tStart) > 50) { ti=2; break;}  //timeout
       i = -1; j=0; continue;
@@ -379,7 +379,7 @@ void rfidACsetOn(){
   // включаем компаратор
   ADCSRB &= ~(1<<ACME);           // отключаем мультиплексор AC
   ACSR &= ~(1<<ACBG);             // отключаем от входа Ain0 1.1V
-  digitalWrite(ACpin, LOW); pinMode(ACpin, OUTPUT);                                            // ускоряем переходные процессы в детекторе
+  digitalWrite(ACpin, LOW); pinMode(ACpin, OUTPUT);                                            // ускоряем переходные процессы в детекторе с 12мс до 2 мс
   delay(1);
   pinMode(ACpin, INPUT);
   delay(1);
@@ -403,7 +403,8 @@ bool searchEM_Marine( bool copyKey = true){
   Serial.print(keyNum);
   Serial.println(") Type: EM-Marie ");
   l2:
-  if (!copyKey) TCCR2A &=0b00111111;              //Оключить ШИМ COM2A (pin 11)
+  if (!CheckL)
+    if (!copyKey) TCCR2A &=0b00111111;              //Оключить ШИМ COM2A (pin 11). Для настройки катушки в резонанс установите CheckL в 1
   digitalWrite(G_Led, gr);
   return rez;
 }
@@ -432,11 +433,7 @@ bool T5557_blockRead(byte* buf){
   for (int i = 0; i<33; i++){    // читаем стартовый 0 и 32 значащих bit
     ti = ttAComp(2000);
     if (ti == 2)  break;         //timeout
-    if ( ( ti == 1 ) && ( i == 0)) {  // если не находим стартовый 0 - это ошибка
-      ti=2; 
-      Serial.print("b2 ");
-      break;
-    }
+    if ( ( ti == 1 ) && ( i == 0)) { ti=2; break; }                             // если не находим стартовый 0 - это ошибка
     if (i > 0){     //начиная с 1-го бита пишем в буфер
       if (ti) bitSet(buf[(i-1) >> 3], 7-j);
         else bitClear(buf[(i-1) >> 3], 7-j);
@@ -542,23 +539,18 @@ bool write2rfid(){
 }
 
 void loop() {
-  bool BtnPinSt  = digitalRead(BtnPin);
-  bool BtnClick;
+  bool BtnClick, BtnPinSt  = digitalRead(BtnPin);
   if ((BtnPinSt == LOW) &&(preBtnPinSt!= LOW)) BtnClick = true;
     else BtnClick = false;
   preBtnPinSt = BtnPinSt;
-  if ((Serial.read() == 't') || BtnClick) {  // переключаель режима чтение/запись
+  if ((Serial.read() == 't') || BtnClick) {                         // переключаель режима чтение/запись
     if (readflag == true) {
       writeflag = !writeflag;
       clearLed(); 
       if (writeflag) digitalWrite(R_Led, HIGH);
         else digitalWrite(G_Led, HIGH);
       Serial.print("Writeflag = "); Serial.println(writeflag);  
-    } else {
-      clearLed();   
-      Sd_ErrorBeep();
-      digitalWrite(B_Led, HIGH);
-    }
+    } else Sd_ErrorBeep();
   }
   if (!writeflag){
     if (searchCyfral() || searchEM_Marine() || searchIbutton()){            // запускаем поиск cyfral, затем поиск EM_Marine, затем поиск dallas
